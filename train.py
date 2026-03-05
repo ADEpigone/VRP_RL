@@ -16,6 +16,30 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
     B : taille de batches
     N : nombre de points dans le pb
     D : dimension de l'espace des RNN et des embeddings
+
+    BEAUCOUP PLUS LOURD QUE CE QUE JE PENSAIS : 
+    trop long ? 
+    Petit topo des variables : 
+        - static : (B, N+1, 2) coordonnées des points de livraison (+ 0,0 par exemple = dépôt)
+        - dynamic : (B, N+1, 2) demandes restantes, charge restante du livreur
+        - load : (B,) charge restante du livreur
+        - cur : (B,) index du point où se trouve le livreur
+        - mask : (B, N+1) masque des actions valides
+        - h, c : (1, B, D) mémoire du RNN
+        - active : (B, 1) les instances non terminées
+        - done : (B,1) les instances qui viennent de terminer à une étape donnée
+        - log_probs : (B, T) log proba des actions prises à chaque étape
+        - total_dist : (B, 1) distance totale parcourue à la fin de l'épisode
+        - R : (B, 1) reward totale
+        - baseline : (B, 1) reward estimé par le critique
+        - adv : (B, 1) avantage (ou désavantage) pour l'acteur
+        - Autres ... ? Faut que je refasse le tour
+    A chaque étape :
+        - on récupère le masque des actions valides
+        - on fait un pas avec l'acteur pour récupérer les proba d'action
+        - on échantillonne une action (pas de greedy pendant l'entraînement)
+        -> un peu flou, on nous propose de choisir selon une distribution
+        -> greedy pourrait s'appliquer, mais pour max l'exploration je prends pas
     """
     actor.to(DEVICE).train()
     critic.to(DEVICE).train()
@@ -26,39 +50,13 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
     for epoch in range(epochs):
         epoch_dist, epoch_la, epoch_lc = [], [], []
 
-        for _ in range(steps_per_epoch):
-            """
-            BEAUCOUP PLUS LOURD QUE CE QUE JE PENSAIS : 
-            trop long ? 
-            Petit topo des variables : 
-             - static : (B, N+1, 2) coordonnées des points de livraison (+ 0,0 par exemple = dépôt)
-             - dynamic : (B, N+1, 2) demandes restantes, charge restante du livreur
-             - load : (B,) charge restante du livreur
-             - cur : (B,) index du point où se trouve le livreur
-             - mask : (B, N+1) masque des actions valides
-             - h, c : (1, B, D) mémoire du RNN
-             - active : (B, 1) les instances non terminées
-             - done : (B,1) les instances qui viennent de terminer à une étape donnée
-             - log_probs : (B, T) log proba des actions prises à chaque étape
-             - total_dist : (B, 1) distance totale parcourue à la fin de l'épisode
-             - R : (B, 1) reward totale
-             - baseline : (B, 1) reward estimé par le critique
-             - adv : (B, 1) avantage (ou désavantage) pour l'acteur
-             - Autres ... ? Faut que je refasse le tour
-            A chaque étape :
-             - on récupère le masque des actions valides
-             - on fait un pas avec l'acteur pour récupérer les proba d'action
-             - on échantillonne une action (pas de greedy pendant l'entraînement)
-              -> un peu flou, on nous propose de choisir selon une distribution
-              -> greedy pourrait s'appliquer, mais pour max l'exploration je prends pas
-            """
-            
+        for _ in range(steps_per_epoch):       
             static, dynamic = env.reset()
             B = batch_size
 
-            h, c  = actor.init_hidden(B, actor.D)
-            h, c  = h.to(DEVICE), c.to(DEVICE)
-            cur   = torch.zeros(B, dtype=torch.long, device=DEVICE)
+            h, c = actor.init_hidden(B, actor.D)
+            h, c = h.to(DEVICE), c.to(DEVICE)
+            cur = torch.zeros(B, dtype=torch.long, device=DEVICE)
             mask0 = env.get_mask()
             # Un pas dans le vide pour setup la baseline
             # Peut-être pas le plus propre ? Suffisant.
@@ -66,12 +64,12 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
                 probs_x0, _ = actor.step(static, dynamic, cur, (h, c), mask0)
             baseline = critic(static, dynamic, probs_x0)
 
-            h, c      = actor.init_hidden(B, actor.D)
-            h, c      = h.to(DEVICE), c.to(DEVICE)
-            cur       = torch.zeros(B, dtype=torch.long, device=DEVICE)
+            h, c = actor.init_hidden(B, actor.D)
+            h, c = h.to(DEVICE), c.to(DEVICE)
+            cur = torch.zeros(B, dtype=torch.long, device=DEVICE)
             log_probs = []
             total_dist = torch.zeros(B, device=DEVICE)
-            active    = torch.ones(B, dtype=torch.bool, device=DEVICE)
+            active = torch.ones(B, dtype=torch.bool, device=DEVICE)
 
             MAX_STEPS = n * (int(capacity) + 1)
 
@@ -89,7 +87,7 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
                 total_dist += (-r) * active.float()
 
                 active = active & ~done
-                cur    = action
+                cur = action
 
                 if not active.any():
                     break
@@ -102,8 +100,8 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
                 print("Charge restante    :", env.load[idx].item())
                 print("Masque             :", env.get_mask()[idx].tolist())
                 print("Steps utilisés     :", _)
-            R   = -total_dist
-            lp  = torch.stack(log_probs, dim=1).sum(dim=1)
+            R = -total_dist
+            lp = torch.stack(log_probs, dim=1).sum(dim=1)
 
             # Losses du papier
             adv = R - baseline.detach()
