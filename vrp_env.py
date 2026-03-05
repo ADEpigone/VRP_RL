@@ -58,28 +58,21 @@ class VRPEnv:
         return torch.stack([self.demands, rem], dim=2)
 
     def get_mask(self):
-        """
-        Masque pour enlever les actions invalides 
-        """
-        # Les clients avec aucune demande
         mask = self.demands == 0
-
-        # Les clients avec une demande qu'on ne peut pas satisfaire en l'état
+        # Interdit les clients trop gros
         mask[:, 1:] |= self.demands[:, 1:] > self.load.unsqueeze(1)
-
-        # Force le retour au dépôt quand on a plus de charge
+        # Interdit les clients si vide
         mask[:, 1:] |= (self.load == 0).unsqueeze(1)
 
-        # On n'autorise pas le dépôt tant qu'au moins un client est faisable.
-        # Cela évite les allers-retours systématiques client <-> dépôt.
-        feasible_client = (~mask[:, 1:]).any(dim=1)
-        mask[:, 0] = feasible_client
+        # On interdit le dépôt UNIQUEMENT si on y est déjà et qu'il reste des clients
+        at_depot = (self.cur == 0)
+        unmet_demand = (self.demands[:, 1:].sum(dim=1) > 0)
+        mask[:, 0] = at_depot & unmet_demand
 
-        # Si tout le monde est masqué, on permet de retourner/rester au dépôt
-        # C'est car on n'arrête pas le programme quand il a fini
-        # Le livreur reste juste au dépôt
-        all_masked = mask.all(dim=1) 
-        mask[all_masked, 0] = False   
+        # S'il a fini (plus de demande), on force à rester au dépôt
+        done = ~unmet_demand
+        mask[done, 0] = False   
+        mask[done, 1:] = True
 
         return mask
 

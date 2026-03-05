@@ -22,7 +22,7 @@ def load_actor(actor, path, device):
     if isinstance(state, dict):
         state = state.get("actor_state_dict", state.get("state_dict", state))
     state = {k.replace("module.", "").replace("actor.", ""): v for k, v in state.items()}
-    actor.load_state_dict(state, strict=False)
+    actor.load_state_dict(state, strict=True)
 
 
 def to_xy(point, area):
@@ -95,6 +95,7 @@ def main():
                 elif e.key == pygame.K_SPACE and not done:
                     with torch.no_grad():
                         probs, hidden = actor.step(env.static, env.dynamic(), env.cur, hidden, env.get_mask())
+                    print(probs)
                     action = Categorical(probs).sample() if args.sample else probs.argmax(1)
                     prev, nxt = int(env.cur.item()), int(action.item())
                     _, _, reward, done_t = env.step(action)

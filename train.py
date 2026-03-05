@@ -48,6 +48,7 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
     env   = VRPEnv(n, capacity, batch_size, DEVICE)
 
     for epoch in range(epochs):
+        actor.train()
         epoch_dist, epoch_la, epoch_lc = [], [], []
         epoch_ent = []
         for _ in range(steps_per_epoch):     
@@ -109,7 +110,7 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
 
             mean_entropy = torch.stack(entropies, dim=1).sum(dim=1).mean()
             adv = R - baseline.detach()
-            loss_a = -(adv * lp).mean() - (0.05 * mean_entropy)
+            loss_a = -(adv * lp).mean() - (0.01 * mean_entropy)
             loss_c = ((R.detach() - baseline) ** 2).mean()
 
             opt_a.zero_grad()
@@ -135,6 +136,31 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
               f"L_actor={sum(epoch_la)/len(epoch_la):.4f} | "
               f"L_critic={sum(epoch_lc)/len(epoch_lc):.4f} | "
               f"entropy={sum(epoch_ent)/len(epoch_ent):.4f}")
+        actor.eval() # Coupe le dropout
+        with torch.no_grad():
+            eval_static, eval_dynamic = env.reset()
+            h, c = actor.init_hidden(B, actor.D)
+            h, c = h.to(DEVICE), c.to(DEVICE)
+            cur = torch.zeros(B, dtype=torch.long, device=DEVICE)
+            active = torch.ones(B, dtype=torch.bool, device=DEVICE)
+            eval_dist = torch.zeros(B, device=DEVICE)
+
+            for _ in range(MAX_STEPS):
+                mask = env.get_mask()
+                probs, (h, c) = actor.step(eval_static, eval_dynamic, cur, (h, c), mask)
+                
+                action = probs.argmax(dim=1) 
+                action = torch.where(active, action, torch.zeros_like(action))
+                
+                eval_static, eval_dynamic, r, done = env.step(action)
+                eval_dist += (-r) * active.float()
+                active = active & ~done
+                cur = action
+                if not active.any():
+                    break
+                    
+        print(f"Distance EVAL Greedy : {eval_dist.mean().item():.4f}")
+        actor.train() # On remet en mode entraînement
 
 if __name__ == '__main__':
     actor  = VRPActor(128)

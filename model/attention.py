@@ -40,7 +40,7 @@ class GlimpseAttention(nn.Module):
         u = self.va(torch.tanh(
             self.wa(torch.cat((x_bar, h.unsqueeze(1).expand_as(x_bar)), dim=-1)))
             ).squeeze(-1)
-        u = u / (128)**0.5
+        #u = u / (128)**0.5
         u = self.C * torch.tanh(u)
         u = u.masked_fill(mask, float('-inf'))
         
@@ -52,7 +52,7 @@ class GlimpseAttention(nn.Module):
             self.wc(torch.cat((x_bar, c.expand_as(x_bar)), dim=-1)))
             ).squeeze(-1)
         
-        u_bar = u_bar / (128)**0.5
+        #u_bar = u_bar / (128)**0.5
         u_bar = self.C * torch.tanh(u_bar)
         
         u_bar = u_bar.masked_fill(mask, float('-inf'))
