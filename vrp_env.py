@@ -54,7 +54,7 @@ class VRPEnv:
         Récupération du vecteur dynamique à partir des demandes
         On pourrait / self.cap, je le fais pas.
         """
-        rem = self.load.unsqueeze(1) - self.demands
+        rem = torch.clamp(self.load.unsqueeze(1) - self.demands, min = 0)
         return torch.stack([self.demands, rem], dim=2)
 
     def get_mask(self):

@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn as nn
 
@@ -10,8 +9,9 @@ class GlimpseAttention(nn.Module):
     N : nombre de points dans le pb
     D : dimension de l'espace des RNN et des embeddings
     """
-    def __init__(self, D):
+    def __init__(self, D, C=10.0):
         super().__init__()
+        self.C = C
 
         self.va = nn.Linear(D, 1)
         self.vc = nn.Linear(D, 1)
@@ -40,6 +40,10 @@ class GlimpseAttention(nn.Module):
         u = self.va(torch.tanh(
             self.wa(torch.cat((x_bar, h.unsqueeze(1).expand_as(x_bar)), dim=-1)))
             ).squeeze(-1)
+        u = u / (128)**0.5
+        u = self.C * torch.tanh(u)
+        u = u.masked_fill(mask, float('-inf'))
+        
         a = torch.softmax(u, dim=1)
         #print(a.shape, x_bar.shape)
         c = torch.bmm(a.unsqueeze(1), x_bar)
@@ -48,12 +52,9 @@ class GlimpseAttention(nn.Module):
             self.wc(torch.cat((x_bar, c.expand_as(x_bar)), dim=-1)))
             ).squeeze(-1)
         
+        u_bar = u_bar / (128)**0.5
+        u_bar = self.C * torch.tanh(u_bar)
+        
         u_bar = u_bar.masked_fill(mask, float('-inf'))
         p = torch.softmax(u_bar, dim=1)
         return p
-
-
-
-    
-
-        

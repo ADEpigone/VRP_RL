@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn as nn
 
@@ -33,7 +32,12 @@ class VRPActor(nn.Module):
         self.D = D
 
         self.static_emb = nn.Conv1d(2, D, 1)
-        self.dynamic_emb = nn.Conv1d(2, D, 1)
+        
+        #Le papier suggérait qu'on traite les embeds en un bloc
+        #Finalement le code offi part plutôt sur 2 embeds qu'on somme
+        self.dem_emb = nn.Conv1d(1, D, 1)
+        self.rem_emb = nn.Conv1d(1, D, 1)
+        
         self.drop = nn.Dropout(0.1)
         self.lstm = nn.LSTMCell(D, D)
         self.att = GlimpseAttention(D)
@@ -43,8 +47,13 @@ class VRPActor(nn.Module):
 
     def _get_embeds(self, static, dynamic):
         s_bar = self.static_emb(static.permute(0, 2, 1)).permute(0, 2, 1)
-        d_bar = self.dynamic_emb(dynamic.permute(0, 2, 1)).permute(0, 2, 1)
-        return s_bar, s_bar + d_bar
+        
+        # [0:1] : la demande
+        # [1:2] : la charge restante
+        d_bar = self.dem_emb(dynamic[:, :, 0:1].permute(0, 2, 1)).permute(0, 2, 1)
+        r_bar = self.rem_emb(dynamic[:, :, 1:2].permute(0, 2, 1)).permute(0, 2, 1)
+        
+        return s_bar, s_bar + d_bar + r_bar
 
     def init_hidden(self, B, D):
         h = torch.zeros(B, D)

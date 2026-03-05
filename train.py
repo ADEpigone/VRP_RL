@@ -49,8 +49,9 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
 
     for epoch in range(epochs):
         epoch_dist, epoch_la, epoch_lc = [], [], []
-
-        for _ in range(steps_per_epoch):       
+        epoch_ent = []
+        for _ in range(steps_per_epoch):     
+            entropies = []  
             static, dynamic = env.reset()
             B = batch_size
 
@@ -60,9 +61,8 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
             mask0 = env.get_mask()
             # Un pas dans le vide pour setup la baseline
             # Peut-être pas le plus propre ? Suffisant.
-            with torch.no_grad():
-                probs_x0, _ = actor.step(static, dynamic, cur, (h, c), mask0)
-            baseline = critic(static, dynamic, probs_x0)
+            baseline = critic(static, dynamic)
+
 
             h, c = actor.init_hidden(B, actor.D)
             h, c = h.to(DEVICE), c.to(DEVICE)
@@ -83,6 +83,9 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
                 action = torch.where(active, action, torch.zeros_like(action))
             
                 log_probs.append(dist_cat.log_prob(action) * active.float())
+                entropy = Categorical(probs).entropy().mean().item()
+                epoch_ent.append(entropy)
+                entropies.append(dist_cat.entropy() * active.float()) 
                 static, dynamic, r, done = env.step(action)
                 total_dist += (-r) * active.float()
 
@@ -102,10 +105,11 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
                 print("Steps utilisés     :", _)
             R = -total_dist
             lp = torch.stack(log_probs, dim=1).sum(dim=1)
-
             # Losses du papier
+
+            mean_entropy = torch.stack(entropies, dim=1).sum(dim=1).mean()
             adv = R - baseline.detach()
-            loss_a = -(adv * lp).mean()
+            loss_a = -(adv * lp).mean() - (0.05 * mean_entropy)
             loss_c = ((R.detach() - baseline) ** 2).mean()
 
             opt_a.zero_grad()
@@ -129,12 +133,13 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
         print(f"Epoch {epoch+1:3d} | "
               f"dist={sum(epoch_dist)/len(epoch_dist):.4f} | "
               f"L_actor={sum(epoch_la)/len(epoch_la):.4f} | "
-              f"L_critic={sum(epoch_lc)/len(epoch_lc):.4f}")
+              f"L_critic={sum(epoch_lc)/len(epoch_lc):.4f} | "
+              f"entropy={sum(epoch_ent)/len(epoch_ent):.4f}")
 
 if __name__ == '__main__':
     actor  = VRPActor(128)
     critic = VRPCritic(128)
 
-    train(actor, critic, n=10, capacity=20, batch_size=256,
+    train(actor, critic, n=10, capacity=20, batch_size=128,
           epochs=30, steps_per_epoch=1000)
     torch.save({"actor_state_dict": actor.state_dict(), "critic_state_dict": critic.state_dict()}, "vrp_checkpoint.pt")
