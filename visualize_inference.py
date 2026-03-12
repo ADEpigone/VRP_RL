@@ -31,126 +31,50 @@ def to_xy(point, area):
     return int(x0 + float(point[0]) * w), int(y0 + float(point[1]) * h)
 
 
-def exact_vrp_opt(env, capacity, max_exact_n=15):
-    """Returns (cost, edges, note). edges = list of (from_idx, to_idx) node-index pairs."""
+def exact_vrp_opt(env, capacity, max_exact_n=10):
+    """Exact CVRP via branch-and-bound with symmetry breaking. Returns (cost, edges, note)."""
     points = env.static[0].detach().cpu()
     demands = env.demands[0, 1:].detach().cpu().tolist()
-    n_clients = len(demands)
+    n = len(demands)
 
-    if n_clients == 0:
+    if n == 0:
         return 0.0, [], None
-    if n_clients > max_exact_n:
-        return None, None, f"Exact solver disabled (n={n_clients} > {max_exact_n})"
-    if any(float(d) > float(capacity) + 1e-9 for d in demands):
+    if n > max_exact_n:
+        return None, None, f"Exact solver disabled (n={n} > {max_exact_n})"
+    if any(d > float(capacity) + 1e-9 for d in demands):
         return math.inf, None, "Infeasible: a demand exceeds capacity"
 
-    dmat = torch.cdist(points, points, p=2).tolist()
-    full = 1 << n_clients
-    inf = float("inf")
+    dm = torch.cdist(points, points, p=2).tolist()
+    INF = float("inf")
+    best_cost = [INF]
+    best_routes = [[]]
 
-    demand_sum = [0.0] * full
-    feasible = [False] * full
-    feasible[0] = True
-    for mask in range(1, full):
-        lsb = mask & -mask
-        idx = lsb.bit_length() - 1
-        prev_m = mask ^ lsb
-        demand_sum[mask] = demand_sum[prev_m] + float(demands[idx])
-        feasible[mask] = demand_sum[mask] <= float(capacity) + 1e-9
+    def search(unvisited, routes, cur_route, last, load, cost):
+        if cost >= best_cost[0]:
+            return
+        if not unvisited:
+            total = cost + dm[last][0]
+            if total < best_cost[0]:
+                best_cost[0] = total
+                best_routes[0] = (routes + [cur_route]) if cur_route else list(routes)
+            return
+        for c in unvisited:
+            rest = [x for x in unvisited if x != c]
+            if load + demands[c] <= float(capacity) + 1e-9:
+                search(rest, routes, cur_route + [c], c + 1,
+                       load + demands[c], cost + dm[last][c + 1])
+            if cur_route and c == min(unvisited):
+                search(rest, routes + [cur_route], [c], c + 1,
+                       demands[c], cost + dm[last][0] + dm[0][c + 1])
 
-    tsp_dp = [[inf] * n_clients for _ in range(full)]
-    route_cost = [inf] * full
-    route_cost[0] = 0.0
-
-    for j in range(n_clients):
-        tsp_dp[1 << j][j] = dmat[0][j + 1]
-
-    for mask in range(1, full):
-        if mask & (mask - 1):
-            mm = mask
-            while mm:
-                lsb_j = mm & -mm
-                j = lsb_j.bit_length() - 1
-                prev_mask = mask ^ lsb_j
-                best = inf
-                pm = prev_mask
-                while pm:
-                    lsb_i = pm & -pm
-                    i = lsb_i.bit_length() - 1
-                    v = tsp_dp[prev_mask][i] + dmat[i + 1][j + 1]
-                    if v < best:
-                        best = v
-                    pm ^= lsb_i
-                tsp_dp[mask][j] = best
-                mm ^= lsb_j
-
-        if feasible[mask]:
-            bc = inf
-            mm = mask
-            while mm:
-                lsb_j = mm & -mm
-                j = lsb_j.bit_length() - 1
-                v = tsp_dp[mask][j] + dmat[j + 1][0]
-                if v < bc:
-                    bc = v
-                mm ^= lsb_j
-            route_cost[mask] = bc
-
-    best_part = [inf] * full
-    best_part[0] = 0.0
-    for mask in range(1, full):
-        anchor = mask & -mask
-        sub = mask
-        while sub:
-            if (sub & anchor) and feasible[sub]:
-                v = route_cost[sub] + best_part[mask ^ sub]
-                if v < best_part[mask]:
-                    best_part[mask] = v
-            sub = (sub - 1) & mask
-
-    def recon_edges(mask):
-        bj, bc = -1, inf
-        mm = mask
-        while mm:
-            lsb_j = mm & -mm
-            j = lsb_j.bit_length() - 1
-            v = tsp_dp[mask][j] + dmat[j + 1][0]
-            if v < bc:
-                bc, bj = v, j
-            mm ^= lsb_j
-        path = [bj]
-        cm, cj = mask, bj
-        while cm & (cm - 1):
-            pm2 = cm ^ (1 << cj)
-            bi, bc2 = -1, inf
-            pm = pm2
-            while pm:
-                lsb_i = pm & -pm
-                i = lsb_i.bit_length() - 1
-                v = tsp_dp[pm2][i] + dmat[i + 1][cj + 1]
-                if v < bc2:
-                    bc2, bi = v, i
-                pm ^= lsb_i
-            path.append(bi)
-            cm, cj = pm2, bi
-        path.reverse()
-        route = [0] + [j + 1 for j in path] + [0]
-        return [(route[k], route[k + 1]) for k in range(len(route) - 1)]
+    search(list(range(n)), [], [], 0, 0.0, 0.0)
 
     edges = []
-    rem = full - 1
-    while rem:
-        anchor = rem & -rem
-        sub = rem
-        while sub:
-            if (sub & anchor) and feasible[sub]:
-                if abs(route_cost[sub] + best_part[rem ^ sub] - best_part[rem]) < 1e-9:
-                    edges.extend(recon_edges(sub))
-                    rem ^= sub
-                    break
-            sub = (sub - 1) & rem
-
-    return best_part[full - 1], edges, None
+    for route in best_routes[0]:
+        seq = [0] + [c + 1 for c in route] + [0]
+        for k in range(len(seq) - 1):
+            edges.append((seq[k], seq[k + 1]))
+    return best_cost[0], edges, None
 
 
 def _make_model_panel(actor, label, device, opt_cost, opt_note):
