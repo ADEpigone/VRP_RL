@@ -1,7 +1,8 @@
 # VRP_RL
 
 Implémentation de "Reinforcement Learning for Solving the Vehicle Routing Problem" de Nazari et al (2018).
-Résolution du VRP par REINFORCE avec un acteur (GRU ou Transformer) et un critique comme baseline.
+
+Contient aussi une implémentation avec Transformers.
 
 ## Prérequis
 
@@ -13,24 +14,23 @@ pip install torch pygame
 
 ```bash
 python train.py --output checkpoints
-python benchmark.py checkpoints/epoch_060.pt
-python visualize_inference.py --checkpoint checkpoints/epoch_060.pt
+python benchmark.py checkpoints_without_cross/epoch_040.pt transformers/epoch_040.pt
+python visualize_inference.py --checkpoint checkpoints_without_cross/epoch_040.pt --checkpoint2 transformers/epoch_040.pt
 ```
 
 ## Structure
 
 ```
-train.py                  # boucle d'entraînement
-benchmark.py              # évaluation sur instances fixes
-visualize_inference.py    # visualisation pygame pas-à-pas
+train.py                  # script de training
+benchmark.py              # évaluation sur instances
+visualize_inference.py    # visualisation pygame
 vrp_env.py                # environnement VRP
 model/
-  VRPActor.py             # acteur GRU (défaut)
-  VRPCritic.py            # critique GRU
+  VRPActor.py             # acteur du papier
+  VRPCritic.py            # critique du papier
   TransformerActor.py     # acteur Transformer
   TransformerCritic.py    # critique Transformer
-  attention.py            # mécanisme d'attention
-checkpoints/              # sauvegardes epoch par epoch
+  attention.py            # mécanisme d'attention (glimpse !)
 ```
 
 ## Entraînement
@@ -66,7 +66,7 @@ python benchmark.py checkpoints/epoch_040.pt
 python benchmark.py checkpoints_with_cross/epoch_040.pt checkpoints_without_cross/epoch_040.pt --vrp 20
 ```
 
-## Visualisation (pygame)
+## Visualisation
 
 Script interactif pour voir la route générée étape par étape. Permet de comparer deux checkpoints côte à côte.
 
@@ -78,10 +78,11 @@ python visualize_inference.py [--checkpoint CKPT] [--checkpoint2 CKPT2] [--n N] 
 - `--checkpoint2` : checkpoint du modèle droit pour comparaison
 - `--n` (défaut: 10) : nombre de clients
 - `--capacity` (défaut: 20) : capacité du véhicule
-- `--sample` : échantillonnage stochastique (défaut: greedy)
-- `--seed` : graine aléatoire
+- `--sample` : rollout stochastique (défaut: si pas mis la stratégie est greedy)
+- `--seed` (défaut 42)
 
 Contrôles :
+
 - `SPACE` : exécuter une étape
 - `N` : nouvelle scène (nouveaux points + demandes)
 - `Q` / `ESC` : quitter
