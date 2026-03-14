@@ -4,6 +4,7 @@ import torch.optim as optim
 import os
 from torch.distributions import Categorical
 from tqdm import tqdm
+from model.FourierActor import FourierVRPActor
 from vrp_env import VRPEnv
 from model.VRPActor  import VRPActor
 from model.VRPCritic import VRPCritic
@@ -245,18 +246,29 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
         actor.train() # On remet en mode entraînement
 
 if __name__ == '__main__':
-
-    OUTPUT_DIR = "without_VRP20"
+    import argparse
+    ap = argparse.ArgumentParser(description="Entraînement VRP par REINFORCE avec baseline")
+    ap.add_argument("--n", type=int, default=20)
+    ap.add_argument("--capacity", type=int, default=30)
+    ap.add_argument("--epochs", type=int, default=60)
+    ap.add_argument("--batch", type=int, default=512)
+    ap.add_argument("--transformer", action="store_true", help="Utiliser Transformers ou pas")
+    ap.add_argument("--cross", action="store_true", help="Activer la pénalité de croisement")
+    ap.add_argument("--output", type=str, default="checkpoints")
+    args = ap.parse_args()
 
     torch.manual_seed(42)
-    torch.cuda.manual_seed_all(42)
-    from model.TransformerActor import TransformerVRPActor
-    from model.TransformerCritic import TransformerVRPCritic
-    actor = VRPActor(D=128)
-    critic = VRPCritic(D=128)
-    #actor  = VRPActor(128)
-    #critic = VRPCritic(128)
 
-    train(actor, critic, n=20, capacity=30, batch_size=512,
-          epochs=60, steps_per_epoch=1000, want_cross=False, lambda_cross=0.1, OUTPUT_DIR=OUTPUT_DIR)
+    if args.transformer:
+        from model.TransformerActor import TransformerVRPActor
+        from model.TransformerCritic import TransformerVRPCritic
+        actor  = TransformerVRPActor(128)
+        critic = TransformerVRPCritic(128)
+    else:
+        actor  = VRPActor(D=128)
+        critic = VRPCritic(128)
+
+    train(actor, critic, n=args.n, capacity=args.capacity, batch_size=args.batch,
+          epochs=args.epochs, want_cross=args.cross,
+          OUTPUT_DIR=args.output)
     torch.save({"actor_state_dict": actor.state_dict(), "critic_state_dict": critic.state_dict()}, "vrp_checkpoint.pt")
