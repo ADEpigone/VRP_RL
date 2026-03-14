@@ -9,13 +9,13 @@ class TransformerVRPCritic(nn.Module):
     Critique avec encodage transformers
     Un peu plus lourd, beaucoup plus expressif à priori, mais pas forcément mieux que le classique (à voir)
     """
-    def __init__(self, embed_dim=128, n_heads=8, n_layers=1, d_ff=512, dropout=0.1):
+    def __init__(self, D=128, n_heads=8, n_layers=3, d_ff=512, dropout=0.1):
         super().__init__()
-        self.encoder = NodeEncoder(embed_dim, n_heads, n_layers, d_ff, dropout)
+        self.encoder = NodeEncoder(D, n_heads, n_layers, d_ff, dropout)
         self.mlp = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim), nn.GELU(),
-            nn.Linear(embed_dim, embed_dim // 2), nn.GELU(),
-            nn.Linear(embed_dim // 2, 1),
+            nn.Linear(D, D), nn.GELU(),
+            nn.Linear(D, D // 2), nn.GELU(),
+            nn.Linear(D // 2, 1),
         )
         for p in self.parameters():
             if p.dim() > 1:

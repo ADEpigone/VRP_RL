@@ -77,7 +77,6 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
         - R : (B, 1) reward totale
         - baseline : (B, 1) reward estimé par le critique
         - adv : (B, 1) avantage (ou désavantage) pour l'acteur
-        - Autres ... ? Faut que je refasse le tour
     A chaque étape :
         - on récupère le masque des actions valides
         - on fait un pas avec l'acteur pour récupérer les proba d'action
