@@ -35,7 +35,7 @@ class VRPEnv:
         Génération/setup d'une nouvelle instance
         Avec new_points et new_demands pas forcément obligatoires :
          - On peut soit garder la topologie soit les demandes
-         -> Permet par exemple de regarder l'adaptabilité du réseau en direct !
+         -> Permet par exemple de regarder l'adaptabilité du réseau en direct ! <- pas utile finalement.
         """
         if new_points or self.base_static is None:
             self.base_static = torch.rand(self.B, self.n + 1, 2, device=self.device)
