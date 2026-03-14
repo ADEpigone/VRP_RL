@@ -14,8 +14,8 @@ pip install torch pygame
 
 ```bash
 python train.py --output checkpoints
-python benchmark.py checkpoints_without_cross/epoch_040.pt transformers/epoch_040.pt
-python visualize_inference.py --checkpoint checkpoints_without_cross/epoch_040.pt --checkpoint2 transformers/epoch_040.pt
+python benchmark.py without_cross_VRP10/epoch_040.pt transformers_VRP10/epoch_040.pt
+python visualize_inference.py --checkpoint without_cross_VRP10/epoch_040.pt --checkpoint2 transformers_VRP10/epoch_040.pt
 ```
 
 ## Structure
@@ -62,8 +62,8 @@ python benchmark.py chemin/checkpoint1.pt [chemin/checkpoint2.pt ...] [--samples
 - `--vrp` (défaut: 20) : taille du problème (10 ou 20)
 
 ```bash
-python benchmark.py checkpoints/epoch_040.pt
-python benchmark.py checkpoints_with_cross/epoch_040.pt checkpoints_without_cross/epoch_040.pt --vrp 20
+python benchmark.py with_cross_VRP10/epoch_040.pt
+python benchmark.py with_cross_VRP10/epoch_040.pt without_cross_VRP10/epoch_040.pt --vrp 10
 ```
 
 ## Visualisation
