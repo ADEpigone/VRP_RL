@@ -35,6 +35,8 @@ class GlimpseAttention(nn.Module):
         - a = poids d'attention 
         - c = vecteur de contexte
         -> on propage et on regarde la distrib finale
+
+        LOGIT EXPLORATION : MAINTIEN ARTIFICIEL DE LENTROPIE 
         """
 
         u = self.va(torch.tanh(
@@ -46,7 +48,7 @@ class GlimpseAttention(nn.Module):
         
         a = torch.softmax(u, dim=1)
         #print(a.shape, x_bar.shape)
-        c = torch.bmm(a.unsqueeze(1), x_bar)
+        c = a.unsqueeze(1) @ x_bar
 
         u_bar = self.vc(torch.tanh( 
             self.wc(torch.cat((x_bar, c.expand_as(x_bar)), dim=-1)))

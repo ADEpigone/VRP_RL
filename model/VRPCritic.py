@@ -18,7 +18,7 @@ class CriticProcessBlock(nn.Module):
         q = self.W_q(h).unsqueeze(1)
         u = torch.sum(self.v * torch.tanh(q + x_bar), dim=-1)
         prob = torch.softmax(u, dim=1)
-        context = torch.bmm(prob.unsqueeze(1), x_bar).squeeze(1)
+        context = (prob.unsqueeze(1) @ x_bar).squeeze(1)
         return context
 
 
@@ -47,7 +47,9 @@ class VRPCritic(nn.Module):
         
         self.dem_emb = nn.Conv1d(1, D, 1)
 
-        self.process_block = CriticProcessBlock(D)
+        self.process_blocks = nn.ModuleList([
+            CriticProcessBlock(D) for _ in range(1)
+        ])
 
         self.proj = nn.Sequential(
             nn.Linear(D, D),
@@ -70,7 +72,8 @@ class VRPCritic(nn.Module):
         B = static.size(0)
 
         h = torch.zeros(B, self.D, device=static.device)
-        context = self.process_block(h, x_bar)
+        for block in self.process_blocks:
+            h = block(h, x_bar)
 
-        value = self.proj(context)
+        value = self.proj(h)
         return value.squeeze(-1)
