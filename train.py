@@ -19,26 +19,35 @@ def crossing_penalty(coords, actions_list):
     """
     B = coords.shape[0]
     device = coords.device
+
+    # On reconstitue le chemin complet en préfixant par le dépôt (indice 0)
+    # path_idx = indices des noeuds visités dans l'ordre
     depot = torch.zeros(B, 1, dtype=torch.long, device=device)
     actions_t = torch.stack(actions_list, dim=1)
-    path_idx = torch.cat([depot, actions_t], dim=1)  # (B, T+1)
+    path_idx = torch.cat([depot, actions_t], dim=1)
     T = path_idx.shape[1]
+
+    # Pas assez de visites pour former un croisement, on renvoie 0
     if T < 4:
         return torch.zeros(B, device=device)
 
+    # On récupère les vraies coordonnées dans l'ordre du chemin
+    # p1, p2 : les deux extrémités de chaque arêtes
     path = torch.gather(coords, 1, path_idx.unsqueeze(-1).expand(-1, -1, 2))
-    p1, p2 = path[:, :-1], path[:, 1:]  # (B, E, 2)
+    p1, p2 = path[:, :-1], path[:, 1:]
     E = p1.shape[1]
     if E < 2:
         return torch.zeros(B, device=device)
 
-    # IDs de tour : on incrémente à chaque passage au dépôt
-    tour_id = (path_idx == 0).cumsum(dim=1)[:, :-1]  # (B, E)
-    same_tour = tour_id.unsqueeze(2) == tour_id.unsqueeze(1)  # (B, E, E)
+    # IDs de tour -> on incrémente à chaque passage au dépôt
+    # permet de savoir quelles arêtes appartiennent au même tour
+    tour_id = (path_idx == 0).cumsum(dim=1)[:, :-1]
+    same_tour = tour_id.unsqueeze(2) == tour_id.unsqueeze(1)
 
     # Test d'intersection par produits vectoriels
-    a, b = p1.unsqueeze(2), p2.unsqueeze(2)  # (B, E, 1, 2)
-    c, d = p1.unsqueeze(1), p2.unsqueeze(1)  # (B, 1, E, 2)
+    # deux segments [a,b] et [c,d] se croisent ssi les signes alternent des deux côtés
+    a, b = p1.unsqueeze(2), p2.unsqueeze(2)
+    c, d = p1.unsqueeze(1), p2.unsqueeze(1)
     cross = lambda u, v: u[..., 0] * v[..., 1] - u[..., 1] * v[..., 0]
     d1 = cross(d - c, a - c)
     d2 = cross(d - c, b - c)
@@ -46,10 +55,55 @@ def crossing_penalty(coords, actions_list):
     d4 = cross(b - a, d - a)
     intersect = (d1 * d2 < 0) & (d3 * d4 < 0)
 
-    # Triangle inférieur, non-adjacent, même tour (intra-tour uniquement)
+    # Triangle inférieur (i > j+1) pour éviter duplication
+    # et exclure les arêtes adjacentes (qui partagent un sommet, elles "se croisent") <- pas intéressant
+    # + same_tour pour ne pénaliser que les croisements intra-tour
     idx = torch.arange(E, device=device)
-    pair_mask = idx.unsqueeze(1) > idx.unsqueeze(0) + 1  # (E, E)
+    pair_mask = idx.unsqueeze(1) > idx.unsqueeze(0) + 1
     return (intersect & pair_mask.unsqueeze(0) & same_tour).float().sum(dim=(1, 2))
+
+
+def run_episode(actor, env, static, dynamic, B, max_steps, greedy=False):
+    # On init les états initiaux pour le rnn
+    h, c = actor.init_hidden(B, actor.D)
+    h, c = h.to(DEVICE), c.to(DEVICE)
+    cur = torch.zeros(B, dtype=torch.long, device=DEVICE)
+    active = torch.ones(B, dtype=torch.bool, device=DEVICE)
+    total_dist = torch.zeros(B, device=DEVICE)
+    log_probs, all_actions, step_entropies = [], [], []
+
+    for _ in range(max_steps):
+        # On récupère le masque actuel de l'environnement
+        # Il masque les sommets qui ne sont pas légaux
+        mask = env.get_mask()
+
+        # On fait une step de l'acteur, pour avancer dans la simu
+        probs, (h, c) = actor.step(static, dynamic, cur, (h, c), mask)
+
+        # Categorical permet de pouvoir sample selon une distrib
+        if greedy:
+            action = probs.argmax(dim=1)
+        else:
+            dist_cat = Categorical(probs)
+            action = dist_cat.sample()
+            # On ajoute les sorties pour log
+            log_probs.append(dist_cat.log_prob(action) * active.float())
+            all_actions.append(action)
+            step_entropies.append(dist_cat.entropy().mean().item())
+        action = torch.where(active, action, torch.zeros_like(action))
+
+        # On fait une step de l'environnement, ce qui valide notre choix
+        static, dynamic, r, done = env.step(action)
+        total_dist += (-r) * active.float()
+
+        # On met à jour les instances non finies
+        active = active & ~done
+        cur = action
+
+        if not active.any():
+            break
+
+    return total_dist, log_probs, all_actions, step_entropies
 
 
 def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per_epoch=1000, eval_batch_size=1000,want_cross = True, lambda_cross=0.1, OUTPUT_DIR="checkpoints"):
@@ -84,6 +138,9 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
         -> un peu flou, on nous propose de choisir selon une distribution
         -> greedy pourrait s'appliquer, mais pour max l'exploration je prends pas
     """
+    
+    # On met acteur/critique en mode entraînement
+    # on init aussi les adam et les scheduler
     actor.to(DEVICE).train()
     critic.to(DEVICE).train()
     opt_a = optim.Adam(actor.parameters(),  lr=1e-4)
@@ -96,9 +153,14 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
     scheduler_c = optim.lr_scheduler.CosineAnnealingLR(
         opt_c, T_max=decay_epochs, eta_min=target_lr
     )
+
+    # Init des env, on a un env spécial pour l'eval afin de le garder fixe 
     env = VRPEnv(n, capacity, batch_size, DEVICE)
     eval_env = VRPEnv(n, capacity, eval_batch_size, DEVICE)
     eval_env.reset(new_points=True, new_demands=True)
+
+    # max steps, en théorie ça ne devrait JAMAIS arriver
+    # en pratique.... ça arrivait
     max_steps = n * (int(capacity) + 1)
     checkpoint_dir = os.path.join("", OUTPUT_DIR)
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -108,71 +170,32 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
         epoch_dist, epoch_la, epoch_lc = [], [], []
         epoch_ent, epoch_cross = [], []
         for _ in tqdm(range(steps_per_epoch), desc=f"Epoch {epoch+1}/{epochs}", unit="batch", leave=False):
-            entropies = []  
+            # On fait une step du batch
+
+            # On init l'environnement (reset si pas la première fois)
             static, dynamic = env.reset()
-            coords = static  # sauvegarde des coordonnées pour le calcul des croisements
-            B = batch_size
-
-            h, c = actor.init_hidden(B, actor.D)
-            h, c = h.to(DEVICE), c.to(DEVICE)
-            cur = torch.zeros(B, dtype=torch.long, device=DEVICE)
-            mask0 = env.get_mask()
-            # Un pas dans le vide pour setup la baseline
-            # Peut-être pas le plus propre ? Suffisant.
+            coords = static
+            # On récupère la baseline du critique
             baseline = critic(static, dynamic)
-
-
-            h, c = actor.init_hidden(B, actor.D)
-            h, c = h.to(DEVICE), c.to(DEVICE)
-            cur = torch.zeros(B, dtype=torch.long, device=DEVICE)
-            log_probs = []
-            all_actions = []
-            total_dist = torch.zeros(B, device=DEVICE)
-            active = torch.ones(B, dtype=torch.bool, device=DEVICE)
-
-            for _ in range(max_steps):
-                mask = env.get_mask()
-
-                probs, (h, c) = actor.step(static, dynamic, cur, (h, c), mask)
-                #Categorical permet de pouvoir sample selon une distrib
-                dist_cat = Categorical(probs)
-                action = dist_cat.sample()
-                action = torch.where(active, action, torch.zeros_like(action))
+            total_dist, log_probs, all_actions, step_ents = run_episode(
+                actor, env, static, dynamic, batch_size, max_steps
+            )
+            epoch_ent.extend(step_ents)
             
-                log_probs.append(dist_cat.log_prob(action) * active.float())
-                all_actions.append(action)
-                entropy = Categorical(probs).entropy().mean().item()
-                epoch_ent.append(entropy)
-                entropies.append(dist_cat.entropy() * active.float()) 
-                static, dynamic, r, done = env.step(action)
-                total_dist += (-r) * active.float()
-
-                active = active & ~done
-                cur = action
-
-                if not active.any():
-                    break
-
-            #ne devrait plus arriver, mais je garde les logs au cas où, c'est informatif
-            unsatisfied = (env.demands[:, 1:] > 1e-4).any(dim=1)
-            if unsatisfied.any():
-                idx = unsatisfied.nonzero()[0].item()
-                print("Demandes restantes :", env.demands[idx, 1:].tolist())
-                print("Charge restante    :", env.load[idx].item())
-                print("Masque             :", env.get_mask()[idx].tolist())
-                print("Steps utilisés     :", _)
+            # Calcul de la récompense, classique total dist
+            # MAIS on ajoute aussi la pénalité de croisement si demandée
             R = -total_dist
             if want_cross:
-                crossings = crossing_penalty(coords, all_actions)  # (B,)
+                crossings = crossing_penalty(coords, all_actions)
                 R_shaped = R - lambda_cross * crossings
             else:
                 R_shaped = R
 
             lp = torch.stack(log_probs, dim=1).sum(dim=1)
-            # Losses du papier + pénalité de croisements intra-tour
 
-            
-            mean_entropy = torch.stack(entropies, dim=1).sum(dim=1).mean()
+            # Losses du papier
+            # une log likelihood et une rmse
+            # on clip également comme demandé dans le papier !
             adv = R_shaped - baseline.detach()
             loss_a = -(adv * lp).mean()
             loss_c = ((R_shaped.detach() - baseline) ** 2).mean()
@@ -190,7 +213,8 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
             # On récup les stats
             # En faire un graphique à la fin ?
             # Actuellement ce qui est important c'est epoch dist
-            # Mais à priori L actor ~ 0 et L critic vers 1 c'est pas mal
+            # Mais à priori L actor ~ 0 et L critic vers 0.5 c'est pas mal
+            # update -> transformers fait descendre + bas L critic, mieux ?
             epoch_dist.append(total_dist.mean().item())
             epoch_la.append(loss_a.item())
             epoch_lc.append(loss_c.item())
@@ -207,28 +231,11 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
               f"cross={sum(epoch_cross)/len(epoch_cross):.2f}")
         actor.eval() # Coupe le dropout
         with torch.no_grad():
-            # Eval sur un benchmark fixe pour comparer les epochs de facon stable.
+            # Eval sur un benchmark fixe pour comparer les epochs de facon stable
             eval_static, eval_dynamic = eval_env.reset(new_points=False, new_demands=False)
-            B_eval = eval_batch_size
-            h, c = actor.init_hidden(B_eval, actor.D)
-            h, c = h.to(DEVICE), c.to(DEVICE)
-            cur = torch.zeros(B_eval, dtype=torch.long, device=DEVICE)
-            active = torch.ones(B_eval, dtype=torch.bool, device=DEVICE)
-            eval_dist = torch.zeros(B_eval, device=DEVICE)
-
-            for _ in range(max_steps):
-                mask = eval_env.get_mask()
-                probs, (h, c) = actor.step(eval_static, eval_dynamic, cur, (h, c), mask)
-                
-                action = probs.argmax(dim=1) 
-                action = torch.where(active, action, torch.zeros_like(action))
-                
-                eval_static, eval_dynamic, r, done = eval_env.step(action)
-                eval_dist += (-r) * active.float()
-                active = active & ~done
-                cur = action
-                if not active.any():
-                    break
+            eval_dist, _, _, _ = run_episode(
+                actor, eval_env, eval_static, eval_dynamic, eval_batch_size, max_steps, greedy=True
+            )
                     
         print(f"Distance EVAL Greedy : {eval_dist.mean().item():.4f}")
         torch.save(
@@ -242,9 +249,12 @@ def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per
         if epoch < decay_epochs:
             scheduler_a.step()
             scheduler_c.step()
-        actor.train() # On remet en mode entraînement
+        actor.train()
 
 if __name__ == '__main__':
+
+    # Cli basique
+    # que commenter ?
     import argparse
     ap = argparse.ArgumentParser(description="Entraînement VRP par REINFORCE avec baseline")
     ap.add_argument("--n", type=int, default=20)
@@ -270,4 +280,3 @@ if __name__ == '__main__':
     train(actor, critic, n=args.n, capacity=args.capacity, batch_size=args.batch,
           epochs=args.epochs, want_cross=args.cross,
           OUTPUT_DIR=args.output)
-    torch.save({"actor_state_dict": actor.state_dict(), "critic_state_dict": critic.state_dict()}, "vrp_checkpoint.pt")
