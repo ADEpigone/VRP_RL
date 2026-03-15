@@ -99,7 +99,7 @@ def main():
         print(args.checkpoint)
         if args.checkpoint.startswith("./transformers/"):
             from model.TransformerActor import TransformerVRPActor
-            actor_a = TransformerVRPActor(embed_dim=args.embedding_dim).to(device).eval()
+            actor_a = TransformerVRPActor(D=args.embedding_dim).to(device).eval()
         path = Path(args.checkpoint)
         if not path.exists():
             raise SystemExit(f"Checkpoint not found: {path}")
@@ -112,7 +112,7 @@ def main():
         print(args.checkpoint2)
         if "transformers" in args.checkpoint2:
             from model.TransformerActor import TransformerVRPActor
-            actor_b = TransformerVRPActor(embed_dim=args.embedding_dim).to(device).eval()
+            actor_b = TransformerVRPActor(D=args.embedding_dim).to(device).eval()
         else:
             actor_b = VRPActor(args.embedding_dim).to(device).eval()
         path2 = Path(args.checkpoint2)

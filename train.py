@@ -52,7 +52,7 @@ def crossing_penalty(coords, actions_list):
     return (intersect & pair_mask.unsqueeze(0) & same_tour).float().sum(dim=(1, 2))
 
 
-def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per_epoch=500, eval_batch_size=1000,want_cross = True, lambda_cross=0.1, OUTPUT_DIR="checkpoints"):
+def train(actor, critic, n=20, capacity=30, batch_size=128, epochs=20, steps_per_epoch=1000, eval_batch_size=1000,want_cross = True, lambda_cross=0.1, OUTPUT_DIR="checkpoints"):
     """
     Boucle d'entraînement acteur critique par REINFORCE 
     Comme dans le papier, on prend le critique, on simule et on compare les deux

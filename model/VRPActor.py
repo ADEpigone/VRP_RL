@@ -38,7 +38,7 @@ class VRPActor(nn.Module):
         self.dem_emb = nn.Conv1d(1, D, 1)
         self.rem_emb = nn.Conv1d(1, D, 1)
         
-        self.drop = nn.Dropout(0.1)
+        self.drop = nn.Dropout(0.0)
         self.lstm = nn.LSTMCell(D, D)
         self.att = GlimpseAttention(D)
         for p in self.parameters():
