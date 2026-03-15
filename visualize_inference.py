@@ -163,7 +163,7 @@ def main():
         panel["total_dist"] += float((-reward).item())
         panel["hidden"] = new_hidden
         policy_done = bool(done_t.item())
-        panel["done"] = policy_done or panel["step_i"] >= args.n * 3
+        panel["done"] = policy_done or panel["step_i"] >= env.n * 3
         if panel["done"]:
             panel["status"] = (f"Done  dist={panel['total_dist']:.3f}" if policy_done
                                else f"MaxSt dist={panel['total_dist']:.3f}")
@@ -171,19 +171,83 @@ def main():
             panel["status"] = f"step {panel['step_i']}: {prev}->{nxt}"
 
     panel_a, panel_b = reset_scene()
-    controls = "SPACE:step | N:new scene | Q:quit"
+    controls_auto   = "SPACE:step | N:new | M:manual | Q:quit"
+    controls_manual = "LClick:place node | Enter:confirm | Bksp:undo | Esc:cancel"
+
+    manual_mode    = False
+    manual_pts     = []   # [[x_norm, y_norm], ...], first = depot
+    manual_demands = []   # int demand per customer (no entry for depot)
+
+    def enter_manual():
+        nonlocal manual_mode, manual_pts, manual_demands, panel_a, panel_b
+        manual_mode = True
+        manual_pts, manual_demands = [], []
+        panel_a["edges"] = []
+        panel_a["status"] = "ready"
+        if panel_b is not None:
+            panel_b["edges"] = []
+            panel_b["status"] = "ready"
+
+    def cancel_manual():
+        nonlocal manual_mode, manual_pts, manual_demands
+        manual_mode = False
+        manual_pts, manual_demands = [], []
+
+    def finalize_manual():
+        nonlocal manual_mode, manual_pts, manual_demands, panel_a, panel_b, env_a, env_b
+        if len(manual_pts) < 2:
+            return
+        manual_mode = False
+        n_cust = len(manual_pts) - 1
+        pts_t = torch.tensor(manual_pts, dtype=torch.float, device=device).unsqueeze(0)
+        dem_t = torch.tensor([0.0] + manual_demands, dtype=torch.float, device=device).unsqueeze(0)
+        env_a = VRPEnv(n_cust, args.capacity, batch_size=1, device=device)
+        env_a.base_static  = pts_t
+        env_a.base_demands = dem_t
+        env_a.reset(new_points=False, new_demands=False)
+        if not use_optimal_right:
+            env_b = VRPEnv(n_cust, args.capacity, batch_size=1, device=device)
+            env_b.base_static  = pts_t.clone()
+            env_b.base_demands = dem_t.clone()
+            env_b.reset(new_points=False, new_demands=False)
+        panel_a = _make_model_panel(actor_a, label_a, device)
+        panel_b = None if use_optimal_right else _make_model_panel(actor_b, label_b, device)
+        manual_pts, manual_demands = [], []
 
     running = True
     while running:
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 running = False
+            elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 and manual_mode:
+                mx, my = e.pos
+                x0, y0, pw, ph = area_l
+                nx = (mx - x0) / pw
+                ny = (my - y0) / ph
+                if 0.0 <= nx <= 1.0 and 0.0 <= ny <= 1.0:
+                    manual_pts.append([nx, ny])
+                    if len(manual_pts) > 1:
+                        manual_demands.append(int(torch.randint(1, 10, (1,)).item()))
             elif e.type == pygame.KEYDOWN:
-                if e.key in (pygame.K_q, pygame.K_ESCAPE):
+                if e.key == pygame.K_q:
                     running = False
-                elif e.key == pygame.K_n:
+                elif e.key == pygame.K_ESCAPE:
+                    if manual_mode:
+                        cancel_manual()
+                    else:
+                        running = False
+                elif e.key == pygame.K_m:
+                    enter_manual()
+                elif e.key == pygame.K_RETURN and manual_mode:
+                    finalize_manual()
+                elif e.key == pygame.K_BACKSPACE and manual_mode:
+                    if manual_pts:
+                        manual_pts.pop()
+                        if manual_demands:
+                            manual_demands.pop()
+                elif e.key == pygame.K_n and not manual_mode:
                     panel_a, panel_b = reset_scene()
-                elif e.key == pygame.K_SPACE:
+                elif e.key == pygame.K_SPACE and not manual_mode:
                     step_model(panel_a, env_a)
                     if not use_optimal_right:
                         step_model(panel_b, env_b)
@@ -198,17 +262,38 @@ def main():
         load_b = float(env_b.load.item()) if env_b is not None else 0.0
         rem_b = float(env_b.demands[0, 1:].sum().item()) if env_b is not None else 0.0
 
-        draw_panel(screen, pts, demands_a, panel_a, int(env_a.cur.item()),
-                   area_l, load_a, rem_a, args.capacity, small, font)
-        cur_b = int(env_b.cur.item()) if env_b is not None else None
-        if panel_b is not None:
-            draw_panel(screen, pts, demands_b, panel_b, cur_b,
-                       area_r, load_b, rem_b, args.capacity, small, font)
+        if not manual_mode:
+            draw_panel(screen, pts, demands_a, panel_a, int(env_a.cur.item()),
+                       area_l, load_a, rem_a, args.capacity, small, font)
+            cur_b = int(env_b.cur.item()) if env_b is not None else None
+            if panel_b is not None:
+                draw_panel(screen, pts, demands_b, panel_b, cur_b,
+                           area_r, load_b, rem_b, args.capacity, small, font)
 
         pygame.draw.line(screen, (60, 60, 70), (W // 2, 10), (W // 2, H - 10), 1)
 
-        info = f"n={args.n}  cap={args.capacity}  {'sample' if args.sample else 'greedy'}  seed={args.seed}"
+        if manual_mode:
+            n_placed = len(manual_pts)
+            if n_placed == 0:
+                hint = "Click to place DEPOT"
+            elif n_placed == 1:
+                hint = "Depot placed — click to add customers"
+            else:
+                hint = f"{n_placed - 1} customer(s) — Enter to confirm, Bksp to undo"
+            screen.blit(font.render("-- MANUAL MODE --", True, (255, 220, 60)), (W // 2 - 100, 46))
+            screen.blit(small.render(hint, True, (220, 200, 80)), (MARG, H - 50))
+            for area in (area_l, area_r):
+                for i, pt in enumerate(manual_pts):
+                    x, y = to_xy(pt, area)
+                    col = (220, 70, 70) if i == 0 else (230, 190, 80)
+                    pygame.draw.circle(screen, col, (x, y), 12 if i == 0 else 10)
+                    lbl = "D" if i == 0 else f"{i}:{manual_demands[i - 1]}"
+                    screen.blit(small.render(lbl, True, (230, 230, 235)), (x + 8, y - 8))
+
+        cur_n = env_a.n
+        info = f"n={cur_n}  cap={args.capacity}  {'sample' if args.sample else 'greedy'}  seed={args.seed}"
         screen.blit(small.render(info, True, (160, 160, 180)), (W // 2 - 180, 12))
+        controls = controls_manual if manual_mode else controls_auto
         screen.blit(small.render(controls, True, (180, 180, 200)), (MARG, H - 28))
 
         pygame.display.flip()
