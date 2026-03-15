@@ -4,6 +4,8 @@ Implémentation de "Reinforcement Learning for Solving the Vehicle Routing Probl
 
 Contient aussi une implémentation avec Transformers.
 
+Réalisé par Alexandre Ducros et Nabil Hamoudi
+
 ## Prérequis
 
 ```bash
@@ -14,8 +16,8 @@ pip install torch pygame
 
 ```bash
 python train.py --output checkpoints
-python benchmark.py without_cross_VRP10/epoch_040.pt transformers_VRP10/epoch_040.pt
-python visualize_inference.py --checkpoint without_cross_VRP10/epoch_040.pt --checkpoint2 transformers_VRP10/epoch_040.pt
+python benchmark.py without_cross_VRP10/papier_040.pt transformers_VRP10/trans10_040.pt
+python visualize_inference.py --checkpoint without_cross_VRP10/papier_040.pt --checkpoint2 transformers_VRP10/trans10_040.pt
 ```
 
 ## Structure
@@ -62,8 +64,8 @@ python benchmark.py chemin/checkpoint1.pt [chemin/checkpoint2.pt ...] [--samples
 - `--vrp` (défaut: 20) : taille du problème (10 ou 20)
 
 ```bash
-python benchmark.py with_cross_VRP10/epoch_040.pt
-python benchmark.py with_cross_VRP10/epoch_040.pt without_cross_VRP10/epoch_040.pt --vrp 10
+python benchmark.py with_cross_VRP10/papier_cross_040.pt
+python benchmark.py with_cross_VRP10/papier_cross_040.pt without_cross_VRP10/papier_040.pt --vrp 10
 ```
 
 ## Visualisation

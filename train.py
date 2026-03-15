@@ -15,7 +15,7 @@ def crossing_penalty(coords, actions_list):
     """
     Compte les croisements d'arêtes intra-tour (entre deux passages au dépôt)
     coords: (B, N+1, 2)
-    actions_list: liste de tenseurs (B,)
+    actions_list: liste de tenseurs (B,1)
     """
     B = coords.shape[0]
     device = coords.device
