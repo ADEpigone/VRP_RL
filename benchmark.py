@@ -9,27 +9,49 @@ from model.VRPActor import VRPActor
 from model.TransformerActor import TransformerVRPActor
 from vrp_env import VRPEnv
 
-def rollout(actor, static_all, demands_all, capacity, device, batch_size):
+def rollout(actor, static_all, demands_all, capacity, device, batch_size, frac_initial=1.0):
     """
-    Un rollout pour un acteur en fonction d'instances
+    Rollout : classique (frac_initial=1.0) ou dynamique.
+    En mode dynamique, (1-frac_initial) des clients arrivent en online,
+    révélés uniformément sur le premier tiers du temps aloué (alloué ?).
     """
     N_total = static_all.shape[0]
     N = static_all.shape[1] - 1
-    max_steps = N * 4
-
-    all_dists = []
+    is_dynamic = frac_initial < 1.0
+    if is_dynamic:
+        max_steps = N * 6
+    else:
+        max_steps = N * 4
+    horizon = max_steps // 2
+    n_init = max(1, int(N * frac_initial))
+    n_late = N - n_init
 
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
 
+    all_dists = []
+
     for start in range(0, N_total, batch_size):
         B = min(batch_size, N_total - start)
-        static = static_all[start:start + B].to(device)
-        demands = demands_all[start:start + B].to(device)
+        static   = static_all[start:start + B].to(device)
+        true_dem = demands_all[start:start + B].clone().to(device)
+
+        hidden = torch.zeros(B, N + 1, device=device)
+        arrival_step = torch.zeros(B, N, dtype=torch.long, device=device)
+        if n_late > 0:
+            # Ordre aléatoire des clients
+            reveal_order = torch.stack([torch.randperm(N, device=device) for _ in range(B)])
+            # Clients qu'on va real plus tard
+            # Ensuite on leur donne leur step d'arrivée
+            # Et on en fait un masque !
+            late_cols = reveal_order[:, n_init:]
+            steps = (torch.arange(n_late, device=device).float() * (horizon - 1) / max(n_late - 1, 1)).long() + 1 
+            arrival_step.scatter_(1, late_cols, steps.unsqueeze(0).expand(B, -1)) 
+            hidden[:, 1:] = true_dem[:, 1:] * (arrival_step > 0).float()
 
         env = VRPEnv(N, capacity, batch_size=B, device=device)
-        env.base_static = static.clone()
-        env.base_demands = demands.clone()
+        env.base_static  = static.clone()
+        env.base_demands = (true_dem - hidden).clone()
         env.reset(new_points=False, new_demands=False)
 
         h, c = actor.init_hidden(B, actor.D)
@@ -39,16 +61,27 @@ def rollout(actor, static_all, demands_all, capacity, device, batch_size):
         dist = torch.zeros(B, device=device)
 
         for step in range(max_steps):
+            # Logique de reveal
+            # On récupère ceux qui devaient arriver, on les injecte et enlève du masque
+            if n_late > 0 and 0 < step <= horizon:
+                arrive_mask = (arrival_step == step) 
+                to_add = hidden[:, 1:] * arrive_mask.float() 
+                env.demands[:, 1:] += to_add
+                hidden[:, 1:] -= to_add 
+            
+            # Plus rien à hide, reveal ou satisfaire ?
+            done = (hidden[:, 1:].sum(1) < 1e-4) & (env.demands[:, 1:].sum(1) < 1e-4) & (env.cur == 0)  
             if done.all():
                 break
+
             with torch.no_grad():
-                probs, (h, c) = actor.step(
-                    env.static, env.dynamic(), env.cur, (h, c), env.get_mask()
-                )
+                probs, (h, c) = actor.step(env.static, env.dynamic(), env.cur, (h, c), env.get_mask())
             action = probs.argmax(1)
-            _, _, reward, done_step = env.step(action)
+            # Ici on ne prend pas en compte le done
+            # A cause du rollout dynamique qui est une "couche par dessus"
+            # Il aurait p-ê fallu ajouter cette couche dan sl'env...
+            _, _, reward, _ = env.step(action)
             dist += (-reward) * (~done).float()
-            done |= done_step
 
         all_dists.extend(dist.cpu().tolist())
         done_so_far = start + B
@@ -56,32 +89,19 @@ def rollout(actor, static_all, demands_all, capacity, device, batch_size):
               end="\r", flush=True)
 
     print(" " * 50, end="\r")
-
     vram = torch.cuda.max_memory_allocated(device) / 1024 ** 2 if device.type == "cuda" else 0.0
     return all_dists, vram
 
 
-def bench(actor, name, static_all, demands_all, capacity, device, batch_size):
-    """
-    Prends un acteur et le bench sur les instances données, retourne un dico contenant les résultats
-    """
-    print(f"  Benchmark de {name} ...", flush=True)
+def bench(actor, name, static_all, demands_all, capacity, device, batch_size, frac_initial=1.0):
+    label = name if frac_initial >= 1.0 else f"{name} (dyn {int(frac_initial * 100)}%)"
+    print(f"  Benchmark de {label} ...", flush=True)
     t0 = time.perf_counter()
-    dists, vram = rollout(actor, static_all, demands_all, capacity, device, batch_size)
+    dists, vram = rollout(actor, static_all, demands_all, capacity, device, batch_size, frac_initial)
     elapsed = time.perf_counter() - t0
-
     n = len(dists)
     mu = sum(dists) / n
-
-    return dict(
-        name=name,
-        n=n,
-        mean_dist=mu,
-        min_dist=min(dists),
-        max_dist=max(dists),
-        time_s=elapsed,
-        vram_mb=vram,
-    )
+    return dict(name=label, n=n, mean_dist=mu, min_dist=min(dists), max_dist=max(dists), time_s=elapsed, vram_mb=vram)
 
 
 def print_table(results):
@@ -119,6 +139,9 @@ if __name__ == "__main__":
     ap.add_argument("checkpoints", nargs="+", metavar="check")
     ap.add_argument("--samples", type=int, default=10000)
     ap.add_argument("--vrp", type=int, choices=[10, 20], default=20)
+    ap.add_argument("--dynamic", action="store_true", help="Inclure un benchmark dynamique (demandes online)")
+    ap.add_argument("--frac_initial", type=float, default=0.5,
+                    help="Fraction des clients connus au départ en mode dynamique (défaut: 0.5)")
     args = ap.parse_args()
 
     embedding_dim = 128
@@ -150,8 +173,14 @@ if __name__ == "__main__":
 
     print(f"Device: {device}  |  batch_size={batch_size}\n")
     results = []
+
+    if not args.dynamic:
+        args.frac_initial = 1.0
+    
+    if args.dynamic:
+        print(f"Benchmark dynamique (frac_initial={args.frac_initial}) :\n")
     for actor, name in models:
-        r = bench(actor, name, static_all, demands_all, capacity, device, batch_size)
+        r = bench(actor, name, static_all, demands_all, capacity, device, batch_size, args.frac_initial)
         results.append(r)
         print(f"  -> Dist moy={r['mean_dist']:.4f}  Temps={r['time_s']:.1f}s\n")
 
