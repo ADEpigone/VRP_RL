@@ -50,6 +50,7 @@ class VRPActor(nn.Module):
         
         # [0:1] : la demande
         # [1:2] : la charge restante
+
         d_bar = self.dem_emb(dynamic[:, :, 0:1].permute(0, 2, 1)).permute(0, 2, 1)
         r_bar = self.rem_emb(dynamic[:, :, 1:2].permute(0, 2, 1)).permute(0, 2, 1)
         

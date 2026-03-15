@@ -6,11 +6,10 @@ Contient aussi une implémentation avec Transformers.
 
 Réalisé par Alexandre Ducros et Nabil Hamoudi
 
-## Prérequis
+## Prérequis 
 
-```bash
-pip install torch pygame
-```
+- torch
+- pygame (pip install pygame)
 
 ## Quickstart
 
@@ -24,9 +23,9 @@ python visualize_inference.py --checkpoint without_cross_VRP10/papier_040.pt --c
 
 ```
 train.py                  # script de training
-benchmark.py              # évaluation sur instances
-visualize_inference.py    # visualisation pygame
-vrp_env.py                # environnement VRP
+benchmark.py              # benchmark !
+visualize_inference.py    # visualisation
+vrp_env.py                # environnement CVRP
 model/
   VRPActor.py             # acteur du papier
   VRPCritic.py            # critique du papier
@@ -57,11 +56,13 @@ python train.py --transformer --cross --output checkpoints_transformer
 ## Benchmark
 
 ```bash
-python benchmark.py chemin/checkpoint1.pt [chemin/checkpoint2.pt ...] [--samples N] [--vrp {10,20}]
+python benchmark.py chemin/checkpoint1.pt [chemin/checkpoint2.pt ...] [--samples N] [--vrp {10,20}] [--dynamic] [--frac_initial F]
 ```
 
 - `--samples` (défaut: 10000) : nombre d'instances de test
 - `--vrp` (défaut: 20) : taille du problème (10 ou 20)
+- `--dynamic` : si le rollout est dynamique
+- `--frac_initial` (défaut: 0.5) : pourcentage des demandes connues avant le rollout, activé ssi flag dynamic
 
 ```bash
 python benchmark.py with_cross_VRP10/papier_cross_040.pt
@@ -87,4 +88,5 @@ Contrôles :
 
 - `SPACE` : exécuter une étape
 - `N` : nouvelle scène (nouveaux points + demandes)
+- `M` : Création d'une instance personnalisée
 - `Q` / `ESC` : quitter
