@@ -18,14 +18,22 @@ def rollout(actor, static_all, demands_all, capacity, device, batch_size, frac_i
     N_total = static_all.shape[0]
     N = static_all.shape[1] - 1
     is_dynamic = frac_initial < 1.0
+
+    # En dynamique on alloue plus de steps pour laisser le temps aux clients d'arriver
+    # Même si ne devrait rien changer
+    # -> sécurité
     if is_dynamic:
         max_steps = N * 6
     else:
         max_steps = N * 4
+
+    # Le reveal se fait sur la première moitié des steps
     horizon = max_steps // 2
     n_init = max(1, int(N * frac_initial))
     n_late = N - n_init
 
+    # Pour mesurer la VRAM de pointe sur GPU
+    # marche pas pour RAM mais....
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
 
@@ -36,6 +44,7 @@ def rollout(actor, static_all, demands_all, capacity, device, batch_size, frac_i
         static   = static_all[start:start + B].to(device)
         true_dem = demands_all[start:start + B].clone().to(device)
 
+        # hidden = les demandes pas encore révélées (masquées à l'agent)
         hidden = torch.zeros(B, N + 1, device=device)
         arrival_step = torch.zeros(B, N, dtype=torch.long, device=device)
         if n_late > 0:
@@ -51,9 +60,12 @@ def rollout(actor, static_all, demands_all, capacity, device, batch_size, frac_i
 
         env = VRPEnv(N, capacity, batch_size=B, device=device)
         env.base_static  = static.clone()
+        # L'env ne voit que les demandes déjà révélées au départ
+        # on ajoute à la main (de manière pas très propre) les demandes qui arrivent
         env.base_demands = (true_dem - hidden).clone()
         env.reset(new_points=False, new_demands=False)
 
+        # Init du RNN
         h, c = actor.init_hidden(B, actor.D)
         h, c = h.to(device), c.to(device)
 
@@ -85,6 +97,7 @@ def rollout(actor, static_all, demands_all, capacity, device, batch_size, frac_i
 
         all_dists.extend(dist.cpu().tolist())
         done_so_far = start + B
+        # Barre de prog, pas besoin de tqdm donc \r
         print(f"  [{done_so_far:>{len(str(N_total))}}/{N_total}  {100*done_so_far/N_total:5.1f}%]",
               end="\r", flush=True)
 
@@ -94,6 +107,9 @@ def rollout(actor, static_all, demands_all, capacity, device, batch_size, frac_i
 
 
 def bench(actor, name, static_all, demands_all, capacity, device, batch_size, frac_initial=1.0):
+    """
+    Bench un modèle sur un ensemble d'instances données  
+    """
     label = name if frac_initial >= 1.0 else f"{name} (dyn {int(frac_initial * 100)}%)"
     print(f"  Benchmark de {label} ...", flush=True)
     t0 = time.perf_counter()
@@ -105,6 +121,9 @@ def bench(actor, name, static_all, demands_all, capacity, device, batch_size, fr
 
 
 def print_table(results):
+    """
+    Fonction d'affichage de la table
+    """
     metrics = [
         ("Echant.", lambda r: f"{r['n']:,}"),
         ("Dist moy.", lambda r: f"{r['mean_dist']:.4f}"),
@@ -114,6 +133,7 @@ def print_table(results):
         ("RAM/VRAM utilisée", lambda r: f"{r['vram_mb']:.1f}"),
     ]
 
+    # Calcul des largeurs de colonnes : on prend le max entre le header et les valeurs
     lw = max(len(m[0]) for m in metrics)
     cw = max(len(r["name"]) for r in results)
     for _, fn in metrics:
@@ -155,10 +175,13 @@ if __name__ == "__main__":
 
     print(f"\nGénération de {args.samples:,} instances (n={n}, cap={capacity}, seed={seed}) ...")
     torch.manual_seed(seed)
+    # static : coordonnées aléatoires dans [0,1]^2
     static_all = torch.rand(args.samples, n + 1, 2)
+    # demandes entières selon papier
     raw = torch.randint(1, 10, (args.samples, n), dtype=torch.float)
     demands_all = torch.cat([torch.zeros(args.samples, 1), raw], dim=1)
 
+    # Chargement des checkpoints passés en argument
     models = []
     for path in args.checkpoints:
         label = Path(path).parent.name
