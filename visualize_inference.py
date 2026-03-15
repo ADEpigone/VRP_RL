@@ -211,8 +211,8 @@ def main():
             panel["status"] = f"étape {panel['step_i']} : {prev}->{nxt}"
 
     panel_a, panel_b = reset_scene()
-    controls_auto   = "ESPACE:avancer | N:nouveau | M:manuel | Q:quitter"
-    controls_manual = "ClicG:placer nœud | Entrée:confirmer | Suppr:annuler | Échap:annuler"
+    controls_auto   = "ESPACE:faire 1 step | N:nouveau | M:manuel | Q:quitter"
+    controls_manual = "ClicG:placer client | Entrée:confirmer | Suppr:annuler | Échap:annuler"
 
     manual_mode    = False
     manual_pts     = [] 
@@ -353,7 +353,7 @@ def main():
                     screen.blit(small.render(lbl, True, (230, 230, 235)), (x + 8, y - 8))
 
         cur_n = env_a.n
-        info = f"n={cur_n}  cap={args.capacity}  {'aléatoire' if args.sample else 'glouton'}  graine={args.seed}"
+        info = f"n={cur_n}  cap={args.capacity}  {'aléatoire' if args.sample else 'glouton'}  seed={args.seed}"
         screen.blit(small.render(info, True, (160, 160, 180)), (W // 2 - 180, 12))
         controls = controls_manual if manual_mode else controls_auto
         screen.blit(small.render(controls, True, (180, 180, 200)), (MARG, H - 28))
