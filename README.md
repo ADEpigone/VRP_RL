@@ -6,7 +6,7 @@ Contient aussi une implémentation avec Transformers.
 
 Réalisé par Alexandre Ducros et Nabil Hamoudi
 
-## Prérequis 
+## Prérequis
 
 - torch
 - pygame (pip install pygame)
@@ -17,6 +17,20 @@ Réalisé par Alexandre Ducros et Nabil Hamoudi
 python train.py --output checkpoints
 python benchmark.py without_cross_VRP10/papier_040.pt transformers_VRP10/trans10_040.pt
 python visualize_inference.py --checkpoint without_cross_VRP10/papier_040.pt --checkpoint2 transformers_VRP10/trans10_040.pt
+```
+
+Dans quelle mesure ça généralise ?
+
+```
+# VRP pour 20 vs trans pour 10 et VRP pour 10
+python benchmark.py without_cross_VRP10/papier_040.pt without_cross_VRP20/papier_035.pt transformers_VRP10/trans10_040.pt --vrp 20
+# VRP pour 20 vs transformers pour 10 ?
+python visualize_inference.py --checkpoint without_cross_VRP20/papier_035.pt --checkpoint2 transformers_VRP10/trans10_0
+40.pt --seed 67 --n 20 --capacity 30
+# VRP entraîné pour 20 vs 10 ?
+python visualize_inference.py --checkpoint without_cross_VRP20/papier_035.pt --checkpoint2  without_cross_VRP10/papier_040.pt --seed 67 --n 20 --capacity 30
+# Avec un rollout dynamique
+python benchmark.py without_cross_VRP10/papier_040.pt with_cross_VRP10/papier_cross_040.pt transformers_VRP10/trans10_040.pt --vrp 10 --dynamic --frac_initial 0.6   
 ```
 
 ## Structure
