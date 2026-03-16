@@ -47,6 +47,9 @@ class VRPCritic(nn.Module):
         
         self.dem_emb = nn.Conv1d(1, D, 1)
 
+        # Dans le papier ils mettent plusieurs couches POSSIBLEMENT
+        # J'ai testé -> permet d'avoir une loss plus basse
+        # mais d'après leur papier, il n'y a qu'une couche....
         self.process_blocks = nn.ModuleList([
             CriticProcessBlock(D) for _ in range(1)
         ])
@@ -62,18 +65,24 @@ class VRPCritic(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     def _get_embeds(self, static, dynamic):
+        """
+        Embeds du code des auteurs
+        """
         s_bar = self.static_emb(static.permute(0, 2, 1)).permute(0, 2, 1)
         
         d_bar = self.dem_emb(dynamic[:, :, 0:1].permute(0, 2, 1)).permute(0, 2, 1)
         return s_bar + d_bar 
 
     def forward(self, static, dynamic):
+        # On embed
         x_bar = self._get_embeds(static, dynamic)
         B = static.size(0)
 
+        # On applique l'attention
         h = torch.zeros(B, self.D, device=static.device)
         for block in self.process_blocks:
             h = block(h, x_bar)
 
+        # Le mlp pour proj dans R
         value = self.proj(h)
         return value.squeeze(-1)

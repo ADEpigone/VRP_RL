@@ -37,7 +37,9 @@ class VRPActor(nn.Module):
         #Finalement le code offi part plutôt sur 2 embeds qu'on somme
         self.dem_emb = nn.Conv1d(1, D, 1)
         self.rem_emb = nn.Conv1d(1, D, 1)
-        
+
+        # Dans le papier il y a un dropout
+        # Dans leur code... non ? -> ne change pas les résultats après test        
         self.drop = nn.Dropout(0.0)
         self.lstm = nn.LSTMCell(D, D)
         self.att = GlimpseAttention(D)
@@ -51,6 +53,8 @@ class VRPActor(nn.Module):
         # [0:1] : la demande
         # [1:2] : la charge restante
 
+        # Je le mets ici mais pourquoi 0:1 et pas 0 ? Pour garder la dimension !
+
         d_bar = self.dem_emb(dynamic[:, :, 0:1].permute(0, 2, 1)).permute(0, 2, 1)
         r_bar = self.rem_emb(dynamic[:, :, 1:2].permute(0, 2, 1)).permute(0, 2, 1)
         
@@ -62,11 +66,17 @@ class VRPActor(nn.Module):
         return (h, c)
     
     def step(self, static, dynamic, cur_node, hidden, mask):
+        # On embed
         s_bar, x_bar = self._get_embeds(static, dynamic)
 
+        # On extrait l'emb du noeud courant pour le LSTM
         idx = cur_node.view(-1,1,1).expand(-1,1,self.D)
+
+        # On met à jour le lstm
         lstm_input = self.drop(s_bar.gather(1, idx).squeeze(1))
         h, c = self.lstm(lstm_input, hidden)
+
+        # On applique l'attention en glimpse
         p = self.att(x_bar, h, mask)
     
         return p, (h, c)
