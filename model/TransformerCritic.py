@@ -12,9 +12,14 @@ class TransformerVRPCritic(nn.Module):
     def __init__(self, D=128, n_heads=8, n_layers=3, d_ff=512, dropout=0.1):
         super().__init__()
         self.encoder = NodeEncoder(D, n_heads, n_layers, d_ff, dropout)
+
+        # MLP dans l'idée du papier mais "semi dense"
+        # on descend graduellemnet + GELU 
         self.mlp = nn.Sequential(
-            nn.Linear(D, D), nn.GELU(),
-            nn.Linear(D, D // 2), nn.GELU(),
+            nn.Linear(D, D), 
+            nn.GELU(),
+            nn.Linear(D, D // 2), 
+            nn.GELU(),
             nn.Linear(D // 2, 1),
         )
         for p in self.parameters():
@@ -22,5 +27,9 @@ class TransformerVRPCritic(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     def forward(self, static, dynamic):
+
+        # On embed pas par fourier les dynamic, peut mieux marcher si on le faire
+        # ou par random fourier features avec de bons sigmas mais
+        # ça marche suffisamment bien.
         x = torch.cat([fourier_encode(static), dynamic], dim=-1)
         return self.mlp(self.encoder(x).mean(1)).squeeze(-1)

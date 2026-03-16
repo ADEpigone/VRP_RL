@@ -38,6 +38,9 @@ class TransformerVRPActor(nn.Module):
 
     def step(self, static, dynamic, cur_node, hidden, mask):
         B, device = static.shape[0], static.device
+        # On embed pas par fourier les dynamic, peut mieux marcher si on le faire
+        # ou par random fourier features avec de bons sigmas mais
+        # ça marche suffisamment bien.
         node_emb = self.encoder(torch.cat([fourier_encode(static), dynamic], dim=-1))
         idx = torch.arange(B, device=device)
 
